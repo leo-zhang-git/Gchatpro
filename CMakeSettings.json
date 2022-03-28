@@ -23,7 +23,7 @@
             "ctestCommandArgs": "",
             "inheritEnvironments": [ "linux_x64" ],
             "remoteMachineName": "-1348994026;110.40.159.232 (username=leo, port=22, authentication=Password)",
-            "remoteCMakeListsRoot": "$HOME/.vs/${projectDirName}/${workspaceHash}/src",
+            "remoteCMakeListsRoot": "$HOME/projects/${projectDirName}/src",
             "remoteBuildRoot": "$HOME/projects/${projectDirName}/${name}",
             "remoteInstallRoot": "$HOME/projects/${projectDirName}/${name}",
             "remoteCopySources": true,
