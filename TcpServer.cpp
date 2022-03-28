@@ -10,7 +10,7 @@ TcpServer::TcpServer()
 TcpServer::~TcpServer()
 {
     close(listenfd);
-    for (Connection &i : clientfds) close(i.fd);
+
 }
 
 bool TcpServer::InitServer(const unsigned short port)
@@ -64,29 +64,31 @@ bool TcpServer::Accept()
 
 
         //      create a client socket
-    int clientfd = accept(listenfd, (struct sockaddr*) &cliaddr,(socklen_t*) &cliaddr_len);
+    clientfd = accept(listenfd, (struct sockaddr*) &cliaddr,(socklen_t*) &cliaddr_len);
     if(clientfd < 0) return false;
-    clientfds.emplace_back(clientfd);
     return true;
 }
 
-char* TcpServer::GetIP()
+char* TcpServer::GetIP(int fd)
 {
-    if(clientfds.size() > 0)
-        return inet_ntoa(cliaddr.sin_addr);
-    else
-        return (char*) "not connect! \n";
+    try {
+        getpeername(fd, (struct sockaddr*)&cliaddr, &cliaddr_len);
+    }
+    catch (std::exception e) {
+        std::cout << "getip exception ! \n";
+    }
+    return inet_ntoa(cliaddr.sin_addr);
 }
 
-int TcpServer::Write(int fd, char *buffer, int size)
+u_int32_t TcpServer::Write(int fd,const char *buffer, int size)
 {
     if(!size) size = strlen(buffer);
     return send(fd, buffer, size, 0);
 }
 
-int TcpServer::Read(int fd,char *buffer, int len)
+u_int32_t TcpServer::Read(int fd,char *buffer, int len, int flg)
 {   
-    int res =  recv(fd, buffer, len, 0);
+    int res =  recv(fd, buffer, len, flg);
     buffer[res] = 0;
     return res;
 }

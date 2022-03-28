@@ -19,9 +19,10 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <unordered_map>
+#include <exception>
 
 constexpr auto LISTEN_LOG = 5;
-constexpr auto BUFFER_SIZE = 5242880;
 
 struct Connection {
     int fd;
@@ -33,8 +34,7 @@ class TcpServer
 public:
     
     int listenfd;       //      listen socket
-    std::vector<Connection> clientfds;       //      client socket
-    char buffer[BUFFER_SIZE]; 
+    int clientfd;
     
     TcpServer();
     ~TcpServer();
@@ -46,13 +46,13 @@ public:
     bool Accept();
 
         //  get user`s ip address
-    char* GetIP();
+    char* GetIP(int fd);
     
-    static int Write(int fd, char *buffer, int size = 0);
-    static int Read(int fd, char *buffer, int len);
+    static u_int32_t Write(int fd,const char *buffer, int size = 0);
+    static u_int32_t Read(int fd, char *buffer, int len, int flg = 0);
 
 //private:
-    int cliaddr_len;
+    socklen_t cliaddr_len;
     struct sockaddr_in cliaddr;
     struct sockaddr_in seraddr;
 
