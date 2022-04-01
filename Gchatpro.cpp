@@ -24,9 +24,18 @@ enum Act
 };
 
 std::threadpool tp;
-std::mutex _sqllock;
 
-MysqlCon sqlcon;
+//  mysql connect
+const char* host = "0.0.0.0";
+const char* user = "root";
+const char* pwd = "zw0727@qq.cn";
+const char* dbname = "Gchatpro";
+unsigned int dbport = 3306;
+zwdbc::Connectpool cp{ host, user, pwd, dbname, dbport };
+
+
+std::mutex _outlock;
+
 
 TcpServer server;
 epoll_event ev, events[MAX_EVENTS];
@@ -37,20 +46,12 @@ std::unordered_map<int, int> getid;
 
 void AddConnect(epoll_event &event);
 void DelConnect(int fd);
-void DealEvent(epoll_event& event);
+void DealInput(int fd);
+void DoTask(std::shared_ptr<char>& buffer, int fd);
 void Signup(Json::Value& jroot, int fd);
 void Signin(Json::Value& jroot, int fd);
 void Signout(int fd);
 
-
-void SQLQueryError(std::string& sqlstr)
-{
-	std::cerr << "sql query error=================================================>" << std::endl;
-	std::cerr << "sql :" << sqlstr << std::endl;
-	std::cerr << "sqlcon :" << mysql_ping(sqlcon.GetCon()) << std::endl;
-	std::cerr << mysql_error(sqlcon.GetCon()) << std::endl;
-	std::cerr << "sql query error=================================================>" << std::endl;
-}
 
 void sendMessage(int fd, const std::string& s)
 {
@@ -60,7 +61,10 @@ void sendMessage(int fd, const std::string& s)
 	memcpy(buffer.get() + HEAD_SIZE, s.c_str(), len);
 	len = htonl(len);
 	memcpy(buffer.get(), &len, 4);
-	server.Write(fd, buffer.get(), s.size() + HEAD_SIZE);
+
+	std::lock_guard<std::mutex> outlock(_outlock);
+	if (server.Write(fd, buffer.get(), s.size() + HEAD_SIZE) <= 0)
+		DelConnect(fd);
 }
 
 bool isEqual(const char* a,const char* b)
@@ -102,22 +106,6 @@ void init()
 		std::cout << "epoll add listenfd failed !" << std::endl;
 		exit(-1);
 	}
-
-	//  mysql connect
-	const char* host = "0.0.0.0";
-	const char* user = "root";
-	const char* pwd = "zw0727@qq.cn";
-	const char* dbname = "Gchatpro";
-	unsigned int dbport = 3306;
-	if (sqlcon.Connect(host, user, pwd, dbname, dbport))
-	{
-		std::cout << " database connected !" << std::endl;
-	}
-	else
-	{
-		std::cout << "database connect failed !" << std::endl;
-		exit(-1);
-	}
 }
 void waitEvent() 
 {
@@ -148,8 +136,7 @@ void waitEvent()
 			else 
 			{
 				//  deal IO
-				std::cout << "new thread deal io \n";
-				tp.commit(DealEvent, events[i]);
+				DealInput(events[i].data.fd);
 			}
 			
 		}
@@ -167,19 +154,21 @@ void AddConnect(epoll_event& event)
 {
 	server.Accept();
 	int fd = server.clientfd; 
-	getid[fd] = -1;
 	ev.events = EPOLLIN|EPOLLET;
 	ev.data.fd = fd;
+
 	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &ev) == -1)
 	{
 		std::cout << "epoll add new fd failed !" << std::endl;
 		exit(-1);
 	}
+	getid[fd] = -1;
 }
 
 void DelConnect(int fd) 
 {
-	if (getid.count(fd)) Signout(fd);
+	if (getid[fd] == -1) getid.erase(fd);
+	else Signout(fd);
 	epoll_event evt;
 	evt.data.fd = fd;
 	epoll_ctl(epollfd, EPOLL_CTL_DEL, evt.data.fd, &evt);
@@ -187,11 +176,9 @@ void DelConnect(int fd)
 	close(evt.data.fd);
 }
 
-void DealEvent(epoll_event& event) 
+void DealInput(int fd) 
 {
-	Json::Reader jreader;
-	Json::Value jroot;
-	std::unique_ptr<char> buffer(new char[BUFFER_SIZE]);
+	std::shared_ptr<char> buffer(new char[BUFFER_SIZE]);
 	u_int32_t len = 0;
 	bool isconnect = false;
 
@@ -199,93 +186,115 @@ void DealEvent(epoll_event& event)
 	{
 		// read buffer is empty
 		int t = 0;
-		if ( (t = server.Read(event.data.fd, buffer.get(), HEAD_SIZE, MSG_DONTWAIT)) <= 0)
+		if ( (t = server.Read(fd, buffer.get(), HEAD_SIZE, 0, 2)) <= 0)
 		{
 			//  the first loop is empty, it prove that connect is closed
 			if (!isconnect)
 			{
-				DelConnect(event.data.fd);
+				DelConnect(fd);
 			}
 			else 
 			{
-				std::cout << "buffer is empty , this thread over \n";
+				std::cout << "buffer is empty\n";
 			}
 			return;
 		}
 		else 
 		{
 			isconnect = true;
+			std::cout << "read a message\n";
 		}
-
-		//  read message
-		memcpy(&len, buffer.get(), 4);
-		len = ntohl(len);
-		if (len >= BUFFER_SIZE)
+		if (t < 12)
 		{
-			//  TODO  long message problem
-			std::cout << "message is too long! \n";
+			std::cout << "recv:============================================================= \n";
+			std::cout << "only recv : " << t << std::endl;
 			return;
 		}
-		u_int32_t readpos = 0;
-		while (len > readpos)
-		{
-			readpos += server.Read(event.data.fd, buffer.get() + readpos + HEAD_SIZE, len);
-		}
-
-
 		//  show message
-
-		std::cout << "recv:============================================================= \nlen : " << len << std::endl;
+		std::cout << "recv:============================================================= \n";
 		//  print recv details on console
-		std::cout << "head len: " << t << std::endl;
-		std::cout << "json len: ";
-		for(int i = 0; i < 12; i ++)
+		std::cout << "head content: ";
+		for (int i = 0; i < 12; i++)
 		{
 			std::cout << (int)((buffer.get() + i)[0]) << " ";
 		}
-		std::cout << "\njson :\n";
-		for (int i = 0; i < len; i++) 
+		std::cout << "\n ";
+		//  read message
+		memcpy(&len, buffer.get(), sizeof len);
+		len = ntohl(len);
+		if (!len)
+		{
+			std::cout << "len is zero ! \n";
+			continue;
+		}
+		else if (len >= BUFFER_SIZE)
+		{
+			//  TODO  long message problem
+			std::cout << "message is too long! \n";
+			continue;
+		}
+
+		int tmp = server.Read(fd, buffer.get() + HEAD_SIZE, len);
+		if (tmp < len)
+		{
+			std::cout << "len in head is longer than real len \n";
+			continue;
+		}
+		
+		//  show message
+		std::cout << "len: " << len << "\n\njson :\n";
+		for (int i = 0; i < len; i++)
 		{
 			std::cout << (buffer.get() + i + 12)[0];
 		}
 		std::cout << std::endl;
 
-
-		if (jreader.parse(buffer.get() + HEAD_SIZE, jroot))
-		{
-			if (jroot["act"].isNull()) 
-			{
-				std::cout << " act is Null !\n";
-				return;
-			}
-			switch (jroot["act"].asInt())
-			{
-			case Act::ACT_SIGNUP :
-				Signup(jroot, event.data.fd);
-				break;
-			case Act::ACT_SIGNIN:
-				Signin(jroot, event.data.fd);
-				break;
-			default:
-				break;
-			}
-
-		}
-		else
-		{
-			std::cout << server.GetIP(event.data.fd) << " send a invaid format !" << std::endl;
-		}
-
-		// std::cout << "send: \n len: " << server.Write(event.data.fd, buffer.get(), len + 12) << std::endl;
+		tp.commit(DoTask, buffer, fd);
 	}
 	return;
 }
+
+void DoTask(std::shared_ptr<char> &buffer, int fd)
+{
+	Json::Reader jreader;
+	Json::Value jroot;
+
+
+
+	if (jreader.parse(buffer.get() + HEAD_SIZE, jroot))
+	{
+		if (jroot["act"].isNull())
+		{
+			std::cout << " act is Null !\n";
+			return;
+		}
+		switch (jroot["act"].asInt())
+		{
+		case Act::ACT_SIGNUP:
+			Signup(jroot, fd);
+			break;
+		case Act::ACT_SIGNIN:
+			Signin(jroot, fd);
+			break;
+		default:
+			break;
+		}
+
+	}
+	else
+	{
+		std::cout << server.GetIP(fd) << " send a invaid format !" << std::endl;
+	}
+
+	// std::cout << "send: \n len: " << server.Write(event.data.fd, buffer.get(), len + 12) << std::endl;
+}
+
 void Signup(Json::Value& jroot, int fd) 
 {
 	std::cout << "\ndo sign up ================================================================================== \n";
 	Json::FastWriter jwriter;
 	Json::Value rejroot;
-	MysqlQuery myq;
+	zwdbc::MysqlQuery myq;
 	std::string sqlstr;
 	std::string account, name, password;
 
@@ -298,13 +307,8 @@ void Signup(Json::Value& jroot, int fd)
 	account = jroot["account"].asString();
 
 	sqlstr = "select uaccount from tUser where uaccount= '" + account + "'";
-	std::unique_lock<std::mutex> sqllcok(_sqllock);
-	if (!myq.query(sqlstr, sqlcon))
-	{
-		SQLQueryError(sqlstr);
-		return;
-	}
-	sqllcok.unlock();
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
 
 	if (myq.rowNum())
 	{
@@ -321,15 +325,12 @@ void Signup(Json::Value& jroot, int fd)
 		name = jroot["name"].asString();
 		password = jroot["password"].asString();
 		sqlstr = "insert into tUser (uaccount, upassword, uname) values ('"+account +"', '"+password+"', '"+name+"');";
-		sqllcok.lock();
-		if (!myq.query(sqlstr, sqlcon))
-		{
-			SQLQueryError(sqlstr);
-			return;
-		}
-		sqllcok.unlock();
+		std::cout << "sql : " << sqlstr << std::endl;
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
 		rejroot["state"] = true;
 	}
+
 	sendMessage(fd, jwriter.write(rejroot));
 }
 
@@ -339,7 +340,7 @@ void Signin(Json::Value& jroot, int fd)
 	Json::FastWriter jwriter;
 	Json::Reader jreader;
 	Json::Value rejroot;
-	MysqlQuery myq;
+	zwdbc::MysqlQuery myq;
 	std::string sqlstr;
 	std::string account, password;
 	rejroot["act"] = Act::ACT_ACKSIGNIN;
@@ -353,11 +354,9 @@ void Signin(Json::Value& jroot, int fd)
 	password = jroot["password"].asString();
 
 	sqlstr = "select upassword, uname, friList, id from tUser where uaccount='" + account + "'";
-	if (!myq.query(sqlstr, sqlcon))
-	{
-		SQLQueryError(sqlstr);
-		return;
-	}
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+
 	myq.nextline();
 	if (!myq.rowNum() || !isEqual(myq.getRow()[0], password.data()))
 	{
@@ -383,11 +382,9 @@ void Signin(Json::Value& jroot, int fd)
 			if (i < friList.size() - 1) sqlstr += ",";
 			else sqlstr += ")";
 		}
-		if (!myq.query(sqlstr, sqlcon))
-		{
-			SQLQueryError(sqlstr);
-			return;
-		}
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+
 		while (myq.nextline())
 			frikvList[myq.getRow()[0]] = myq.getRow()[1];
 		rejroot["friList"] = frikvList;
@@ -395,17 +392,21 @@ void Signin(Json::Value& jroot, int fd)
 		int id = rejroot["id"].asInt();
 		if (getsock.count(id)) DelConnect(getsock[id]);
 		getid[fd] = id;
+		getsock[id] = fd;
 	}
 	sendMessage(fd, jwriter.write(rejroot));
 }
 
 void Signout(int fd)
 {
-
 	Json::FastWriter jwriter;
 	Json::Value rejroot;
+
+	getsock.erase(getid[fd]);
 	getid.erase(fd);
 	std::cout << "signout : " << fd << std::endl;
 	rejroot["act"] = Act::ACT_SIGNOUT;
 	sendMessage(fd, jwriter.write(rejroot));
 }
+
+

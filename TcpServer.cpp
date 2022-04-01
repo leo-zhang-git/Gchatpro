@@ -86,9 +86,32 @@ u_int32_t TcpServer::Write(int fd,const char *buffer, int size)
     return send(fd, buffer, size, 0);
 }
 
-u_int32_t TcpServer::Read(int fd,char *buffer, int len, int flg)
+u_int32_t TcpServer::Read(int fd,char *buffer, int len, int flg, int timeout)
 {   
-    int res =  recv(fd, buffer, len, flg);
-    buffer[res] = 0;
-    return res;
+    if (timeout)
+    {
+        timeval tvl{timeout, 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tvl, sizeof tvl);
+    }
+    
+    u_int32_t readpos = 0;
+    while (len > readpos)
+    {
+        int tmp = recv(fd, buffer + readpos, len - readpos, flg);
+        if (tmp <= 0)
+        {
+            std::cerr << "recv timeout !\n";
+            break;
+        }
+        readpos += tmp;
+        std::cout << "len :" << len << " already recv len: " << readpos << std::endl;
+        if (readpos >= len)
+        {
+            std::cout << "recv complete !\n";
+            break;
+        }
+    }
+    //  int res =  recv(fd, buffer, len, flg);
+    buffer[readpos] = 0;
+    return readpos;
 }

@@ -49,7 +49,7 @@ public:
     char* GetIP(int fd);
     
     static u_int32_t Write(int fd,const char *buffer, int size = 0);
-    static u_int32_t Read(int fd, char *buffer, int len, int flg = 0);
+    static u_int32_t Read(int fd, char *buffer, int len, int flg = 0, int timeval = 0);
 
 //private:
     socklen_t cliaddr_len;
