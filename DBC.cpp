@@ -132,9 +132,10 @@ namespace zwdbc
 
     MysqlQuery Connectpool::query(std::string sqlstr)
     {
+        //std::cout << "\nsql : " << sqlstr << "\n";
         MysqlQuery res;
         MYSQL* conn = getCon();
-        mysql_query(conn, "set names utf8");
+        mysql_query(conn, "set names utf8mb4");
         res.query(sqlstr, conn);
         addCon(conn);
         return res;

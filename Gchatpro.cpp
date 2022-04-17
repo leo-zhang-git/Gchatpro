@@ -19,8 +19,10 @@ enum Act
 	ACT_CHATF = 2,
 	ACT_ACKSIGNUP = 3,
 	ACT_ACKSIGNIN = 4,
-	ACT_ACKCHATF = 5,
-	ACT_SIGNOUT = 6
+	ACT_ADDFA = 5,
+	ACT_ADDFB = 6,
+	ACT_REMOVEF = 7,
+	ACT_ACKADDFA = 8
 };
 
 std::threadpool tp;
@@ -51,20 +53,65 @@ void DoTask(std::shared_ptr<char>& buffer, int fd);
 void Signup(Json::Value& jroot, int fd);
 void Signin(Json::Value& jroot, int fd);
 void Signout(int fd);
+void ChatToOne(Json::Value& jroot, int sender);
+void AddFriendA(Json::Value& jroot, int fd);
+void AddFriendB(Json::Value& jroot, int fd);
+bool AddFriend(int a, int b);
 
+std::string JsonToString(const Json::Value& root)
+{
+	static Json::Value def = []() {
+		Json::Value def;
+		Json::StreamWriterBuilder::setDefaults(&def);
+		def["emitUTF8"] = true;
+		return def;
+	}();
+
+	std::ostringstream stream;
+	Json::StreamWriterBuilder stream_builder;
+	stream_builder.settings_ = def;//Config emitUTF8
+	std::unique_ptr<Json::StreamWriter> writer(stream_builder.newStreamWriter());
+	writer->write(root, &stream);
+	return stream.str();
+}
+
+template<typename T>
+int findJsonArray(const Json::Value& array, T a)
+{
+	if (!array.isArray()) return -2;
+	for (int i = 0; i < array.size(); i++)
+	{
+		if (array[i] == Json::Value(a)) return i;
+	}
+	return -1;
+}
 
 void sendMessage(int fd, const std::string& s)
 {
+	std::cout << "send ++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n" << "fd : " << fd << "json : \n" << s << std::endl;
+
 	u_int32_t len = s.size();
 	std::unique_ptr<char> buffer(new char[BUFFER_SIZE]);
 	memset(buffer.get(), 0, HEAD_SIZE);
 	memcpy(buffer.get() + HEAD_SIZE, s.c_str(), len);
+	if (len > BUFFER_SIZE)
+	{
+		std::cerr << "send len is too long !\n";
+		return;
+	}
 	len = htonl(len);
 	memcpy(buffer.get(), &len, 4);
 
 	std::lock_guard<std::mutex> outlock(_outlock);
 	if (server.Write(fd, buffer.get(), s.size() + HEAD_SIZE) <= 0)
 		DelConnect(fd);
+}
+
+std::string& replaceSinglequote(std::string& s)
+{
+	for (char& i : s)
+		if (i == '\'') i = '`';
+	return s;
 }
 
 bool isEqual(const char* a,const char* b)
@@ -276,6 +323,16 @@ void DoTask(std::shared_ptr<char> &buffer, int fd)
 		case Act::ACT_SIGNIN:
 			Signin(jroot, fd);
 			break;
+		case Act::ACT_CHATF:
+			if (getid[fd] == -1 ) return;
+			ChatToOne(jroot, getid[fd]);
+			break;
+		case Act::ACT_ADDFA:
+			AddFriendA(jroot, fd);
+			break;
+		case Act::ACT_ADDFB:
+			AddFriendB(jroot, fd);
+			break;
 		default:
 			break;
 		}
@@ -306,7 +363,7 @@ void Signup(Json::Value& jroot, int fd)
 	}
 	account = jroot["account"].asString();
 
-	sqlstr = "select uaccount from tUser where uaccount= '" + account + "'";
+	sqlstr = "select uaccount from tUser where uaccount= '" + replaceSinglequote(account) + "'";
 	myq = cp.query(sqlstr);
 	if (!myq.getState()) return;
 
@@ -324,8 +381,8 @@ void Signup(Json::Value& jroot, int fd)
 		}
 		name = jroot["name"].asString();
 		password = jroot["password"].asString();
-		sqlstr = "insert into tUser (uaccount, upassword, uname) values ('"+account +"', '"+password+"', '"+name+"');";
-		std::cout << "sql : " << sqlstr << std::endl;
+		sqlstr = "insert into tUser (uaccount, upassword, uname) values ('"
+			+replaceSinglequote(account) +"', '"+replaceSinglequote(password)+"', '"+replaceSinglequote(name)+"');";
 		myq = cp.query(sqlstr);
 		if (!myq.getState()) return;
 		rejroot["state"] = true;
@@ -353,7 +410,7 @@ void Signin(Json::Value& jroot, int fd)
 	account = jroot["account"].asString();
 	password = jroot["password"].asString();
 
-	sqlstr = "select upassword, uname, friList, id from tUser where uaccount='" + account + "'";
+	sqlstr = "select upassword, uname, friList, id, friReq, roomReq from tUser where uaccount='" + replaceSinglequote(account) + "'";
 	myq = cp.query(sqlstr);
 	if (!myq.getState()) return;
 
@@ -369,32 +426,87 @@ void Signin(Json::Value& jroot, int fd)
 		rejroot["state"] = true;
 		rejroot["name"] = std::string(myq.getRow()[1]);
 		rejroot["id"] = atoi(myq.getRow()[3]);
-		Json::Value friList, frikvList;
-		if (!jreader.parse(myq.getRow()[2], friList))
-		{
-			std::cerr << "jreader parse failed !\n";
-			return;
-		}
-		sqlstr = "select id, uname from tUser where id in (";
-		for (int i = 0; i < friList.size(); i++)
-		{
-			sqlstr += friList[i].asString();
-			if (i < friList.size() - 1) sqlstr += ",";
-			else sqlstr += ")";
-		}
-		myq = cp.query(sqlstr);
-		if (!myq.getState()) return;
 
-		while (myq.nextline())
-			frikvList[myq.getRow()[0]] = myq.getRow()[1];
+		//  get friend list
+		Json::Value friList, frikvList;
+		if (myq.getRow()[2] != nullptr)
+		{
+			if (!jreader.parse(myq.getRow()[2], friList))
+			{
+				std::cerr << "jreader parse failed !\n";
+				return;
+			}
+			sqlstr = "select id, uname from tUser where id in (";
+			for (int i = 0; i < friList.size(); i++)
+			{
+				sqlstr += friList[i].asString();
+				if (i < friList.size() - 1) sqlstr += ",";
+				else sqlstr += ")";
+			}
+			zwdbc::MysqlQuery tquery = cp.query(sqlstr);
+			if (!tquery.getState()) return;
+			while (tquery.nextline())
+				frikvList[tquery.getRow()[0]] = tquery.getRow()[1];
+		}
 		rejroot["friList"] = frikvList;
 
+		//  断开之前登录的相同账号的连接
 		int id = rejroot["id"].asInt();
-		if (getsock.count(id)) DelConnect(getsock[id]);
+		if (getsock.count(id) && getsock[id] != fd) DelConnect(getsock[id]);
 		getid[fd] = id;
 		getsock[id] = fd;
 	}
 	sendMessage(fd, jwriter.write(rejroot));
+
+	//  send offline message
+	if (rejroot["state"].asBool())
+	{
+		//  send offline friendship request
+		Json::Value friReqs, onefriReq;
+		if(myq.getRow()[4] != nullptr) jreader.parse(myq.getRow()[4], friReqs);
+		sqlstr = "update tUser set friReq=null where id=" + std::to_string(getid[fd]);
+		cp.query(sqlstr);
+		onefriReq["act"] = Act::ACT_ADDFA;
+		for (auto &i : friReqs.getMemberNames())
+		{
+			onefriReq["id"] = atoi(i.c_str());
+			onefriReq["name"] = friReqs[i];
+			sendMessage(fd, JsonToString(onefriReq));
+		}
+
+		//  send offline add room request
+
+		//  send offline chat message
+		std::cerr << "send offline message !\n";
+		sqlstr = "select sender, message from OfflineMessage where receiver=" + rejroot["id"].asString();
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+		Json::Value message;
+		message["act"] = Act::ACT_CHATF;
+		while (myq.nextline())
+		{
+			Json::Value marr;
+			int sender = std::atoi(myq.getRow()[0]);
+			if (!jreader.parse(myq.getRow()[1], marr))
+			{
+				std::cerr << "jreader parse failed !\n";
+				return;
+			}
+
+			for (int i = 0; i < marr.size(); i++)
+			{
+				message["id"] = getid[fd];
+				message["text"] = marr[i].asString();
+				//  std::cout << "send : " << marr[i].asString() << " to :" << message["id"].asString() << std::endl;
+				ChatToOne(message, sender);
+			}
+		}
+		//  delete offline message
+		sqlstr = "delete from OfflineMessage where receiver=" + rejroot["id"].asString();
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+
+	}
 }
 
 void Signout(int fd)
@@ -405,8 +517,191 @@ void Signout(int fd)
 	getsock.erase(getid[fd]);
 	getid.erase(fd);
 	std::cout << "signout : " << fd << std::endl;
-	rejroot["act"] = Act::ACT_SIGNOUT;
-	sendMessage(fd, jwriter.write(rejroot));
+	
+	// rejroot["act"] = Act::ACT_SIGNOUT;
+	// sendMessage(fd, jwriter.write(rejroot));
 }
 
+void ChatToOne(Json::Value& jroot, int sender)
+{
+	std::cout << "\ndo ChatToOne ================================================================================== \n";
+	int receiver = jroot["id"].asInt();
+	Json::FastWriter jwriter;
+	if (getsock.count(receiver))
+	{
+		int fd = getsock[receiver];
+		jroot["id"] = sender;
 
+		std::cout << "receiver: " << getid[fd] << "\ntext:" << jroot["text"].asString() << std::endl;
+		sendMessage(fd, jwriter.write(jroot));
+	}
+	else
+	{
+		Json::Reader jreader;
+		Json::Value marr;
+		zwdbc::MysqlQuery myq;
+		std::string sqlstr;
+		bool isExist = false;
+
+		sqlstr = "select message from OfflineMessage where sender=" + std::to_string(sender) + " and receiver=" + std::to_string(receiver);
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+		if (myq.rowNum())
+		{
+			myq.nextline();
+			if (!jreader.parse(myq.getRow()[0], marr))
+			{
+				std::cerr << "jreader parse failed !\n";
+				return;
+			}
+			isExist = true;
+		}
+		marr.append(jroot["text"]);
+		std::string ts = JsonToString(marr);
+		if (isExist)
+		{
+		sqlstr = "update OfflineMessage set message= '" + replaceSinglequote(ts) + "' where receiver=" + std::to_string(receiver) + " and sender=" + std::to_string(sender);
+			myq = cp.query(sqlstr);
+			if (!myq.getState()) return;
+		}
+		else
+		{
+			sqlstr = "insert into OfflineMessage (receiver, sender, message) values(" + std::to_string(receiver) + ","
+				+ std::to_string(sender) + ",'" + replaceSinglequote(ts) + "')";
+			myq = cp.query(sqlstr);
+			if (!myq.getState()) return;
+		}
+		std::cout << "target is offline, save the message into database\n";
+	}
+}
+void AddFriendA(Json::Value& jroot, int fd) 
+{
+	std::cout << "\ndo AddFirendA ================================================================================== \n";
+	if (getid[fd] == -1)
+	{
+		std::cout << "未登录，不能添加好友！\n";
+		return;
+	}
+	std::string account = jroot["account"].asString();
+	std::string sqlstr;
+	zwdbc::MysqlQuery myq;
+	Json::Reader jreader;
+	Json::Value rejroot, friList, ackjroot;
+	int receiver;
+
+	sqlstr = "select id, friReq, friList from tUser where uaccount='" + replaceSinglequote(account) + "'";
+	myq = cp.query(sqlstr);
+
+	//  验证请求信息并返回状态给发起者
+	ackjroot["act"] = Act::ACT_ACKADDFA;
+	if (!myq.getState()) return;
+	if (!myq.nextline()) 
+	{
+		"账号不存在 ! ";
+		ackjroot["state"] = -1;
+		sendMessage(fd, JsonToString(ackjroot));
+		return;
+	}
+	if (atoi(myq.getRow()[0]) == getid[fd])
+	{
+		std::cout << "不能添加自己为好友！\n";
+		ackjroot["state"] = -2;
+		sendMessage(fd, JsonToString(ackjroot));
+		return;
+	}
+	if (myq.getRow()[2] != nullptr) jreader.parse(myq.getRow()[2], friList);
+	if (findJsonArray(friList, getid[fd]) >= 0)
+	{
+		std::cout << "已经是好友了！\n";
+		ackjroot["state"] = -3;
+		sendMessage(fd, JsonToString(ackjroot));
+		return;
+	}
+	ackjroot["state"] = 0;
+	sendMessage(fd, JsonToString(ackjroot));
+
+	receiver = atoi(myq.getRow()[0]);
+	if (getsock.count(receiver))
+	{
+		sqlstr = "select uname from tUser where id=" + std::to_string(getid[fd]);
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+		myq.nextline();
+		
+		rejroot["act"] = Act::ACT_ADDFA;
+		rejroot["id"] = getid[fd];
+		rejroot["name"] = myq.getRow()[0];
+		sendMessage(getsock[receiver], JsonToString(rejroot));
+	}
+	else
+	{
+		if (myq.getRow()[1] != nullptr) jreader.parse(myq.getRow()[1], rejroot);
+		sqlstr = "select uname from tUser where id=" + std::to_string(getid[fd]);
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+		myq.nextline();
+		rejroot[std::to_string(getid[fd])] = myq.getRow()[0];
+		sqlstr = "update tUser set friReq='" + JsonToString(rejroot) + "' where id=" + std::to_string(receiver);
+		cp.query(sqlstr);
+		if (!myq.getState()) return;
+	}
+}
+void AddFriendB(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo AddFirendB ================================================================================== \n";
+	if (getid[fd] == -1)
+	{
+		std::cout << "未登录，不能添加好友！\n";
+		return;
+	}
+	int target = jroot["id"].asInt();
+	if (!AddFriend(getid[fd], target) || !AddFriend(target, getid[fd])) return;
+
+	Json::Value greeting;
+	greeting["act"] = Act::ACT_CHATF;
+	greeting["id"] = target;
+	greeting["text"] = "我们已经是好友啦！";
+	if (!getsock.count(target))
+	{
+		ChatToOne(greeting, getid[fd]);
+		return;
+	}
+
+	std::string sqlstr = "select uname from tUser where id=" + std::to_string(getid[fd]);
+	zwdbc::MysqlQuery myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+	myq.nextline();
+
+	jroot["id"] = getid[fd];
+	jroot["name"] = myq.getRow()[0];
+	sendMessage(getsock[target], JsonToString(jroot));
+	ChatToOne(greeting, getid[fd]);
+}
+bool AddFriend(int a, int b)
+{
+	std::cout << a << " add a friend " << b << "\n";
+	std::string sqlstr;
+	zwdbc::MysqlQuery myq;
+	Json::Value rejroot, friList;
+	Json::Reader jreader;
+
+	sqlstr = "select friList from tUser where id=" + std::to_string(a);
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return false;
+	if (!myq.nextline())
+	{
+		"账号不存在 ! ";
+		return false;
+	}
+	if (myq.getRow()[0] != nullptr) jreader.parse(myq.getRow()[0], friList);
+	if (friList.size() == 0 || findJsonArray(friList, b) == -1) friList.append(b);
+	else
+	{
+		std::cout << "已经是好友了 ！\n";
+		return false;
+	}
+	sqlstr = "update tUser set friList='" + JsonToString(friList) + "' where id=" + std::to_string(a);
+	cp.query(sqlstr);
+	if (!myq.getState()) return false;
+	return true;
+}

@@ -44,6 +44,7 @@ include rules.ninja
 build cmake_object_order_depends_target_Gchatpro_Debug: phony || CMakeFiles\Gchatpro.dir
 
 build CMakeFiles\Gchatpro.dir\Gchatpro.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\..\..\Gchatpro.cpp || cmake_object_order_depends_target_Gchatpro_Debug
+  DEFINES = -DUNICODE -D_UNICODE
   FLAGS = /DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1   -std=c++11 -std:c++17
   INCLUDES = -I..\..\..\include -I\www\server\mysql\include
   OBJECT_DIR = CMakeFiles\Gchatpro.dir
@@ -52,6 +53,7 @@ build CMakeFiles\Gchatpro.dir\Gchatpro.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\
   TARGET_PDB = Gchatpro.pdb
 
 build CMakeFiles\Gchatpro.dir\TcpServer.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\..\..\TcpServer.cpp || cmake_object_order_depends_target_Gchatpro_Debug
+  DEFINES = -DUNICODE -D_UNICODE
   FLAGS = /DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1   -std=c++11 -std:c++17
   INCLUDES = -I..\..\..\include -I\www\server\mysql\include
   OBJECT_DIR = CMakeFiles\Gchatpro.dir
@@ -60,6 +62,7 @@ build CMakeFiles\Gchatpro.dir\TcpServer.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..
   TARGET_PDB = Gchatpro.pdb
 
 build CMakeFiles\Gchatpro.dir\jsoncpp.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\..\..\jsoncpp.cpp || cmake_object_order_depends_target_Gchatpro_Debug
+  DEFINES = -DUNICODE -D_UNICODE
   FLAGS = /DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1   -std=c++11 -std:c++17
   INCLUDES = -I..\..\..\include -I\www\server\mysql\include
   OBJECT_DIR = CMakeFiles\Gchatpro.dir
@@ -68,6 +71,7 @@ build CMakeFiles\Gchatpro.dir\jsoncpp.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\.
   TARGET_PDB = Gchatpro.pdb
 
 build CMakeFiles\Gchatpro.dir\threadpool.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\..\..\threadpool.cpp || cmake_object_order_depends_target_Gchatpro_Debug
+  DEFINES = -DUNICODE -D_UNICODE
   FLAGS = /DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1   -std=c++11 -std:c++17
   INCLUDES = -I..\..\..\include -I\www\server\mysql\include
   OBJECT_DIR = CMakeFiles\Gchatpro.dir
@@ -76,6 +80,7 @@ build CMakeFiles\Gchatpro.dir\threadpool.cpp.obj: CXX_COMPILER__Gchatpro_Debug .
   TARGET_PDB = Gchatpro.pdb
 
 build CMakeFiles\Gchatpro.dir\DBC.cpp.obj: CXX_COMPILER__Gchatpro_Debug ..\..\..\DBC.cpp || cmake_object_order_depends_target_Gchatpro_Debug
+  DEFINES = -DUNICODE -D_UNICODE
   FLAGS = /DWIN32 /D_WINDOWS /W3 /GR /EHsc /MDd /Zi /Ob0 /Od /RTC1   -std=c++11 -std:c++17
   INCLUDES = -I..\..\..\include -I\www\server\mysql\include
   OBJECT_DIR = CMakeFiles\Gchatpro.dir

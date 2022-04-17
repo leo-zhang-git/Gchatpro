@@ -15,6 +15,9 @@ TcpServer::~TcpServer()
 
 bool TcpServer::InitServer(const unsigned short port)
 {
+    //  ignore SIGPIPE signal
+    signal(SIGPIPE, SIG_IGN);
+
     if(listenfd > 0) {close(listenfd); listenfd = -1;}
 
 

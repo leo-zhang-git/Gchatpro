@@ -5,7 +5,7 @@
             "generator": "Ninja",
             "configurationType": "Debug",
             "inheritEnvironments": [ "msvc_x64_x64" ],
-            "buildRoot": "${projectDir}\\out\\build\\${name}",
+            "buildRoot": "$HOME/projects/${projectDirName}/${name}",
             "installRoot": "${projectDir}\\out\\install\\${name}",
             "cmakeCommandArgs": "",
             "buildCommandArgs": "",
@@ -32,7 +32,9 @@
             "remoteCopySourcesMethod": "rsync",
             "addressSanitizerRuntimeFlags": "detect_leaks=0",
             "variables": [],
-            "intelliSenseMode": "linux-gcc-x64"
+            "intelliSenseMode": "linux-gcc-x64",
+            "remoteCopyUseCompilerDefaults": false,
+            "remoteCopyAdditionalIncludeDirectories": [ "/usr/lib/", "/usr/include/", "/www/server/mysql/include/", "/www/server/mysql/lib/", "" ]
         }
     ]
 }

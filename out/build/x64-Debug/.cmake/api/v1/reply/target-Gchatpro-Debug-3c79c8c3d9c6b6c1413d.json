@@ -16,6 +16,7 @@
 			"add_executable",
 			"link_directories",
 			"target_link_libraries",
+			"add_definitions",
 			"include_directories"
 		],
 		"files" : 
@@ -30,25 +31,31 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 23,
+				"line" : 24,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 19,
+				"line" : 20,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 26,
+				"line" : 27,
 				"parent" : 0
 			},
 			{
 				"command" : 3,
 				"file" : 0,
-				"line" : 16,
+				"line" : 11,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 17,
 				"parent" : 0
 			}
 		]
@@ -65,14 +72,25 @@
 					"fragment" : "-std:c++17"
 				}
 			],
-			"includes" : 
+			"defines" : 
 			[
 				{
 					"backtrace" : 4,
-					"path" : "F:/work/vspro/Gchatpro/include"
+					"define" : "UNICODE"
 				},
 				{
 					"backtrace" : 4,
+					"define" : "_UNICODE"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 5,
+					"path" : "F:/work/vspro/Gchatpro/include"
+				},
+				{
+					"backtrace" : 5,
 					"path" : "/www/server/mysql/include"
 				}
 			],
