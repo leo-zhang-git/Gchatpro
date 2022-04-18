@@ -410,7 +410,7 @@ void Signin(Json::Value& jroot, int fd)
 	account = jroot["account"].asString();
 	password = jroot["password"].asString();
 
-	sqlstr = "select upassword, uname, friList, id, friReq, roomReq from tUser where uaccount='" + replaceSinglequote(account) + "'";
+	sqlstr = "select upassword, uname, friList, id, friReq, roomReq, offline_message from tUser where uaccount='" + replaceSinglequote(account) + "'";
 	myq = cp.query(sqlstr);
 	if (!myq.getState()) return;
 
@@ -461,9 +461,13 @@ void Signin(Json::Value& jroot, int fd)
 	//  send offline message
 	if (rejroot["state"].asBool())
 	{
-		//  send offline friendship request
+		//  离线消息所需参数赋值
 		Json::Value friReqs, onefriReq;
-		if(myq.getRow()[4] != nullptr) jreader.parse(myq.getRow()[4], friReqs);
+		if (myq.getRow()[4] != nullptr) jreader.parse(myq.getRow()[4], friReqs);
+		Json::Value chatlog, message;
+		if (myq.getRow()[6] != nullptr) jreader.parse(myq.getRow()[6], chatlog);
+
+		//  send offline friendship request
 		sqlstr = "update tUser set friReq=null where id=" + std::to_string(getid[fd]);
 		cp.query(sqlstr);
 		onefriReq["act"] = Act::ACT_ADDFA;
@@ -478,31 +482,21 @@ void Signin(Json::Value& jroot, int fd)
 
 		//  send offline chat message
 		std::cerr << "send offline message !\n";
-		sqlstr = "select sender, message from OfflineMessage where receiver=" + rejroot["id"].asString();
-		myq = cp.query(sqlstr);
-		if (!myq.getState()) return;
-		Json::Value message;
+		std::cout << JsonToString(chatlog) << std::endl;
 		message["act"] = Act::ACT_CHATF;
-		while (myq.nextline())
+		for (std::string& s : chatlog.getMemberNames())
 		{
-			Json::Value marr;
-			int sender = std::atoi(myq.getRow()[0]);
-			if (!jreader.parse(myq.getRow()[1], marr))
+			message["id"] = getid[fd];
+			for (int i = 0; i < chatlog[s].size(); i++)
 			{
-				std::cerr << "jreader parse failed !\n";
-				return;
-			}
-
-			for (int i = 0; i < marr.size(); i++)
-			{
-				message["id"] = getid[fd];
-				message["text"] = marr[i].asString();
-				//  std::cout << "send : " << marr[i].asString() << " to :" << message["id"].asString() << std::endl;
-				ChatToOne(message, sender);
+				message["text"] = chatlog[s][i];
+				std::cout << "chat log :\n" << JsonToString(message) << std::endl;
+				ChatToOne(message, atoi(s.c_str()));
 			}
 		}
+		
 		//  delete offline message
-		sqlstr = "delete from OfflineMessage where receiver=" + rejroot["id"].asString();
+		sqlstr = "update tUser set offline_message=NULL  where id=" + rejroot["id"].asString();
 		myq = cp.query(sqlstr);
 		if (!myq.getState()) return;
 
@@ -534,43 +528,33 @@ void ChatToOne(Json::Value& jroot, int sender)
 
 		std::cout << "receiver: " << getid[fd] << "\ntext:" << jroot["text"].asString() << std::endl;
 		sendMessage(fd, jwriter.write(jroot));
+		jroot["id"] = receiver;
 	}
 	else
 	{
 		Json::Reader jreader;
-		Json::Value marr;
+		Json::Value chatlog;
 		zwdbc::MysqlQuery myq;
 		std::string sqlstr;
-		bool isExist = false;
 
-		sqlstr = "select message from OfflineMessage where sender=" + std::to_string(sender) + " and receiver=" + std::to_string(receiver);
+		sqlstr = "select offline_message from tUser where id=" + std::to_string(receiver);
 		myq = cp.query(sqlstr);
 		if (!myq.getState()) return;
-		if (myq.rowNum())
+		myq.nextline();
+		if (myq.getRow()[0] != nullptr)
 		{
-			myq.nextline();
-			if (!jreader.parse(myq.getRow()[0], marr))
+			if (!jreader.parse(myq.getRow()[0], chatlog))
 			{
 				std::cerr << "jreader parse failed !\n";
 				return;
 			}
-			isExist = true;
 		}
-		marr.append(jroot["text"]);
-		std::string ts = JsonToString(marr);
-		if (isExist)
-		{
-		sqlstr = "update OfflineMessage set message= '" + replaceSinglequote(ts) + "' where receiver=" + std::to_string(receiver) + " and sender=" + std::to_string(sender);
-			myq = cp.query(sqlstr);
-			if (!myq.getState()) return;
-		}
-		else
-		{
-			sqlstr = "insert into OfflineMessage (receiver, sender, message) values(" + std::to_string(receiver) + ","
-				+ std::to_string(sender) + ",'" + replaceSinglequote(ts) + "')";
-			myq = cp.query(sqlstr);
-			if (!myq.getState()) return;
-		}
+		
+		chatlog[std::to_string(sender)].append(jroot["text"]);
+		std::string ts = JsonToString(chatlog);
+		sqlstr = "update tUser set offline_message= '" + replaceSinglequote(ts) + "' where id=" + std::to_string(receiver);
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
 		std::cout << "target is offline, save the message into database\n";
 	}
 }
