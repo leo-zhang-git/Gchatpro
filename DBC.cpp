@@ -111,6 +111,7 @@ namespace zwdbc
     }
 
     Connectpool::Connectpool(const char* host, const char* user, const char* pwd, const char* dbname, unsigned int port, int num)
+        :host(host), user(user), pwd(pwd), dbname(dbname), port(port)
     {
         for (int i = 0; i < num; i++)
         {
@@ -135,6 +136,7 @@ namespace zwdbc
         //std::cout << "\nsql : " << sqlstr << "\n";
         MysqlQuery res;
         MYSQL* conn = getCon();
+        if (!mysql_ping(conn)) conn = Connect(host, user, pwd, dbname, port);
         mysql_query(conn, "set names utf8mb4");
         res.query(sqlstr, conn);
         addCon(conn);

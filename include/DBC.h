@@ -67,6 +67,11 @@ namespace zwdbc
         std::mutex _m;
         std::atomic<bool> run;
         std::condition_variable cv;
+        const char* host;
+        const  char* user;
+        const  char* pwd;
+        const char* dbname;
+        unsigned int port = 3306;
     };
 }
 
