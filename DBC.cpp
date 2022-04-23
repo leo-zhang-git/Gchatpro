@@ -136,7 +136,7 @@ namespace zwdbc
         //std::cout << "\nsql : " << sqlstr << "\n";
         MysqlQuery res;
         MYSQL* conn = getCon();
-        if (!mysql_ping(conn)) conn = Connect(host, user, pwd, dbname, port);
+        if (mysql_ping(conn)) conn = Connect(host, user, pwd, dbname, port);
         mysql_query(conn, "set names utf8mb4");
         res.query(sqlstr, conn);
         addCon(conn);
