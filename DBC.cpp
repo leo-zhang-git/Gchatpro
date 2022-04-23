@@ -131,7 +131,7 @@ namespace zwdbc
         run = false;
     }
 
-    MysqlQuery Connectpool::query(std::string sqlstr)
+    MysqlQuery Connectpool::query(const std::string& sqlstr)
     {
         //std::cout << "\nsql : " << sqlstr << "\n";
         MysqlQuery res;

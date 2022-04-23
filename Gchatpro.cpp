@@ -25,7 +25,7 @@ enum Act
 	ACT_ACKADDFA = 8,
 	ACT_CHATR = 9,
 	ACT_GETLOG = 10,
-	ACT_SENDLOG = 11,
+	ACT_GETNAME = 11,
 	ACT_ONLINECNT = 12,
 	ACT_FRISTATE = 13
 };
@@ -62,7 +62,7 @@ std::atomic_int online_cnt{0};
 void AddConnect(epoll_event &event);
 void DelConnect(int fd);
 void DealInput(int fd);
-void DoTask(std::shared_ptr<char>& buffer, int fd);
+void DoTask(Json::Value& jroot, int fd);
 void SetOnlineCnt();
 void NotifyFriState(int target, int who, UserState state);
 void Signup(Json::Value& jroot, int fd);
@@ -71,8 +71,11 @@ void Signout(int fd);
 void ChatToOne(Json::Value& jroot, int sender);
 void AddFriendA(Json::Value& jroot, int fd);
 void AddFriendB(Json::Value& jroot, int fd);
-void ChatToRoom(Json::Value& jroot, int sender);
 bool AddFriend(int a, int b);
+void ChatToRoom(Json::Value& jroot, int sender);
+void SendChatLog(std::string timestamp, int rid, int fd);
+void SendName(Json::Value& jroot, int fd);
+
 
 std::string JsonToString(const Json::Value& root)
 {
@@ -201,7 +204,7 @@ void waitEvent()
 			else 
 			{
 				//  deal IO
-				// DealInput(events[i].data.fd);
+				//  DealInput(events[i].data.fd);
 				tp.commit(DealInput, int(events[i].data.fd));
 			}
 			
@@ -314,66 +317,66 @@ void DealInput(int fd)
 			std::cout << (buffer.get() + i + 12)[0];
 		}
 		std::cout << std::endl;
-
-		tp.commit(DoTask, buffer, fd);
+		Json::Reader jreader;
+		Json::Value jroot;
+		if (!jreader.parse(buffer.get() + HEAD_SIZE, jroot)) 
+		{
+			std::cerr << "jreader parse failed !\n";
+			std::cout << server.GetIP(fd) << " send a invaid format !" << std::endl;
+			return;
+		}
+		tp.commit(DoTask, jroot, fd);
 	}
 	return;
 }
 
-void DoTask(std::shared_ptr<char> &buffer, int fd)
+void DoTask(Json::Value &jroot, int fd)
 {
-	Json::Reader jreader;
-	Json::Value jroot;
-
-
-
-	if (jreader.parse(buffer.get() + HEAD_SIZE, jroot))
+	
+	if (jroot["act"].isNull())
 	{
-		if (jroot["act"].isNull())
+		std::cout << " act is Null !\n";
+		return;
+	}
+	switch (jroot["act"].asInt())
+	{
+	case Act::ACT_SIGNUP:
+		Signup(jroot, fd);
+		break;
+	case Act::ACT_SIGNIN:
+		Signin(jroot, fd);
+		break;
+	case Act::ACT_CHATF:
+		if (getid[fd] == -1 )
 		{
-			std::cout << " act is Null !\n";
+			std::cerr << "没有登录，不允许聊天！";
 			return;
 		}
-		switch (jroot["act"].asInt())
+		ChatToOne(jroot, getid[fd]);
+		break;
+	case Act::ACT_ADDFA:
+		AddFriendA(jroot, fd);
+		break;
+	case Act::ACT_ADDFB:
+		AddFriendB(jroot, fd);
+		break;
+	case Act::ACT_CHATR:
+		if (getid[fd] == -1)
 		{
-		case Act::ACT_SIGNUP:
-			Signup(jroot, fd);
-			break;
-		case Act::ACT_SIGNIN:
-			Signin(jroot, fd);
-			break;
-		case Act::ACT_CHATF:
-			if (getid[fd] == -1 )
-			{
-				std::cerr << "没有登录，不允许聊天！";
-				return;
-			}
-			ChatToOne(jroot, getid[fd]);
-			break;
-		case Act::ACT_ADDFA:
-			AddFriendA(jroot, fd);
-			break;
-		case Act::ACT_ADDFB:
-			AddFriendB(jroot, fd);
-			break;
-		case Act::ACT_CHATR:
-			if (getid[fd] == -1)
-			{
-				std::cerr << "没有登录，不允许群聊！";
-				return;
-			}
-			ChatToRoom(jroot, getid[fd]);
-			break;
-		default:
-			break;
+			std::cerr << "没有登录，不允许群聊！";
+			return;
 		}
-
+		ChatToRoom(jroot, getid[fd]);
+		break;
+	case Act::ACT_GETLOG:
+		SendChatLog(jroot["starttime"].asString(), jroot["id"].asInt(), fd);
+		break;
+	case Act::ACT_GETNAME:
+		SendName(jroot, fd);
+		break;
+	default:
+		break;
 	}
-	else
-	{
-		std::cout << server.GetIP(fd) << " send a invaid format !" << std::endl;
-	}
-
 	// std::cout << "send: \n len: " << server.Write(event.data.fd, buffer.get(), len + 12) << std::endl;
 }
 void SetOnlineCnt() 
@@ -862,4 +865,51 @@ void ChatToRoom(Json::Value& jroot, int sender)
 			sendMessage(getsock[target], JsonToString(jroot));
 		}
 	}
+}
+void SendChatLog(std::string timestamp, int rid, int fd)
+{
+	std::cout << "\ndo SendChatLog ================================================================================== \n";
+
+	if (timestamp == "")
+	{
+		std::cout << "没有给出时间戳!\n";
+		return;
+	}
+
+	Json::Value rejroot, message;
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+
+	rejroot["act"] = Act::ACT_GETLOG;
+	rejroot["id"] = rid;
+
+	sqlstr = "select sender, text from roomlog" + std::to_string(rid) + " where sendtime> '" + timestamp+"'";
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+	if (myq.rowNum() == 0)
+	{
+		std::cout << "群" << rid << " 没有记录\n";
+		return;
+	}
+	while (myq.nextline())
+	{
+		message.append(atoi(myq.getRow()[0]));
+		message.append(myq.getRow()[1]);
+		rejroot["chatlog"].append(message);
+		message.clear();
+	}
+
+	myq = cp.query("select now()");
+	myq.nextline();
+	rejroot["time"] = myq.getRow()[0];
+
+	sendMessage(fd, JsonToString(rejroot));
+}
+
+void SendName(Json::Value& jroot, int fd)
+{
+	zwdbc::MysqlQuery myq = cp.query("select uname from tUser where id=" + jroot["id"].asString());
+	if (!myq.nextline()) return;
+	jroot["name"] = myq.getRow()[0];
+	sendMessage(fd, JsonToString(jroot));
 }

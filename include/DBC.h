@@ -57,7 +57,7 @@ namespace zwdbc
         Connectpool(const char* host, const  char* user, const  char* pwd, const char* dbname, unsigned int port = 3306, int num = 4);
         ~Connectpool();
 
-        MysqlQuery query(std::string sqlstr);
+        MysqlQuery query(const std::string& sqlstr);
     private:
         MYSQL* getCon();
         void addCon(MYSQL* conn);
