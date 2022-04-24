@@ -27,7 +27,10 @@ enum Act
 	ACT_GETLOG = 10,
 	ACT_GETNAME = 11,
 	ACT_ONLINECNT = 12,
-	ACT_FRISTATE = 13
+	ACT_FRISTATE = 13,
+	ACT_GETMEMBER = 14,
+	ACT_ADDFAID = 15,
+	ACT_GETSTATUS = 16,
 };
 enum UserState
 {
@@ -70,11 +73,14 @@ void Signin(Json::Value& jroot, int fd);
 void Signout(int fd);
 void ChatToOne(Json::Value& jroot, int sender);
 void AddFriendA(Json::Value& jroot, int fd);
+void AddFriendAbyID(Json::Value& jroot, int fd);
 void AddFriendB(Json::Value& jroot, int fd);
 bool AddFriend(int a, int b);
 void ChatToRoom(Json::Value& jroot, int sender);
 void SendChatLog(std::string timestamp, int rid, int fd);
 void SendName(Json::Value& jroot, int fd);
+void GetMember(Json::Value& jroot, int fd);
+void GetStatus(Json::Value& jroot, int fd);
 
 
 std::string JsonToString(const Json::Value& root)
@@ -357,6 +363,9 @@ void DoTask(Json::Value &jroot, int fd)
 	case Act::ACT_ADDFA:
 		AddFriendA(jroot, fd);
 		break;
+	case Act::ACT_ADDFAID:
+		AddFriendAbyID(jroot, fd);
+		break;
 	case Act::ACT_ADDFB:
 		AddFriendB(jroot, fd);
 		break;
@@ -373,6 +382,12 @@ void DoTask(Json::Value &jroot, int fd)
 		break;
 	case Act::ACT_GETNAME:
 		SendName(jroot, fd);
+		break;
+	case Act::ACT_GETMEMBER:
+		GetMember(jroot, fd);
+		break;
+	case Act::ACT_GETSTATUS:
+		GetStatus(jroot, fd);
 		break;
 	default:
 		break;
@@ -392,6 +407,12 @@ void SetOnlineCnt()
 	}
 }
 
+/// <summary>
+/// 通知id为target的用户，id为who的用户当前的状态state
+/// </summary>
+/// <param name="target"></param>
+/// <param name="who"></param>
+/// <param name="state"></param>
 void NotifyFriState(int target, int who, UserState state)
 {
 	if (getsock.count(target) == 0) return;
@@ -744,6 +765,77 @@ void AddFriendA(Json::Value& jroot, int fd)
 		if (!myq.getState()) return;
 	}
 }
+void AddFriendAbyID(Json::Value& jroot, int fd) 
+{
+	std::cout << "\ndo AddFirendAbyID ================================================================================== \n";
+	if (getid[fd] == -1)
+	{
+		std::cout << "未登录，不能添加好友！\n";
+		return;
+	}
+	std::string sqlstr;
+	zwdbc::MysqlQuery myq;
+	Json::Reader jreader;
+	Json::Value rejroot, friList, ackjroot;
+	int receiver;
+
+	sqlstr = "select id, friReq, friList from tUser where id=" + jroot["id"].asString();
+	myq = cp.query(sqlstr);
+
+	//  验证请求信息并返回状态给发起者
+	ackjroot["act"] = Act::ACT_ACKADDFA;
+	if (!myq.getState()) return;
+	if (!myq.nextline())
+	{
+		"账号不存在 ! ";
+		ackjroot["state"] = -1;
+		sendMessage(fd, JsonToString(ackjroot));
+		return;
+	}
+	if (atoi(myq.getRow()[0]) == getid[fd])
+	{
+		std::cout << "不能添加自己为好友！\n";
+		ackjroot["state"] = -2;
+		sendMessage(fd, JsonToString(ackjroot));
+		return;
+	}
+	if (myq.getRow()[2] != nullptr) jreader.parse(myq.getRow()[2], friList);
+	if (findJsonArray(friList, getid[fd]) >= 0)
+	{
+		std::cout << "已经是好友了！\n";
+		ackjroot["state"] = -3;
+		sendMessage(fd, JsonToString(ackjroot));
+		return;
+	}
+	ackjroot["state"] = 0;
+	sendMessage(fd, JsonToString(ackjroot));
+
+	receiver = atoi(myq.getRow()[0]);
+	if (getsock.count(receiver))
+	{
+		sqlstr = "select uname from tUser where id=" + std::to_string(getid[fd]);
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+		myq.nextline();
+
+		rejroot["act"] = Act::ACT_ADDFA;
+		rejroot["id"] = getid[fd];
+		rejroot["name"] = myq.getRow()[0];
+		sendMessage(getsock[receiver], JsonToString(rejroot));
+	}
+	else
+	{
+		if (myq.getRow()[1] != nullptr) jreader.parse(myq.getRow()[1], rejroot);
+		sqlstr = "select uname from tUser where id=" + std::to_string(getid[fd]);
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+		myq.nextline();
+		rejroot[std::to_string(getid[fd])] = myq.getRow()[0];
+		sqlstr = "update tUser set friReq='" + JsonToString(rejroot) + "' where id=" + std::to_string(receiver);
+		cp.query(sqlstr);
+		if (!myq.getState()) return;
+	}
+}
 void AddFriendB(Json::Value& jroot, int fd)
 {
 	std::cout << "\ndo AddFirendB ================================================================================== \n";
@@ -911,5 +1003,50 @@ void SendName(Json::Value& jroot, int fd)
 	zwdbc::MysqlQuery myq = cp.query("select uname from tUser where id=" + jroot["id"].asString());
 	if (!myq.nextline()) return;
 	jroot["name"] = myq.getRow()[0];
+	sendMessage(fd, JsonToString(jroot));
+}
+
+void GetMember(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo GetMember ================================================================================== \n";
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+	Json::Value member;
+
+	sqlstr = "select members from tRoom where id=" + jroot["id"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	sqlstr = "select id, uname from tUser where id in (";
+	std::string memberList = std::string(myq.getRow()[0]);
+	memberList[0] = ' ';
+	memberList[memberList.size() - 1] = ' ';
+	sqlstr += memberList + ")";
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+	while (myq.nextline())
+	{
+		member.append(atoi(myq.getRow()[0]));
+		member.append(myq.getRow()[1]);
+		jroot["members"].append(member);
+		member.clear();
+	}
+	sendMessage(fd, JsonToString(jroot));
+}
+
+void GetStatus(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo GetStatus ================================================================================== \n";
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+
+	sqlstr = "select uaccount, uname, email, creat_time, lastlogin_time from tUser where id =" + jroot["id"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	jroot["account"] = myq.getRow()[0];
+	jroot["name"] = myq.getRow()[1];
+	if (myq.getRow()[2] != nullptr) jroot["email"] = myq.getRow()[2];
+	else jroot["email"] = "";
+	jroot["createtime"] = myq.getRow()[3];
+	jroot["lastsignin"] = myq.getRow()[4];
 	sendMessage(fd, JsonToString(jroot));
 }
