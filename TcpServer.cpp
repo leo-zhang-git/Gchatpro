@@ -101,9 +101,14 @@ u_int32_t TcpServer::Read(int fd,char *buffer, int len, int flg, int timeout)
     while (len > readpos)
     {
         int tmp = recv(fd, buffer + readpos, len - readpos, flg);
-        if (tmp <= 0)
+        if (tmp < 0)
         {
             std::cerr << "recv timeout !\n";
+            return tmp;
+        }
+        else if (tmp == 0)
+        {
+            std::cerr << "recv fd closed !\n";
             break;
         }
         readpos += tmp;
