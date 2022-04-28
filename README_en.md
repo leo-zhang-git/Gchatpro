@@ -14,6 +14,9 @@ make
 
 2.Run the generated executable file 'Gchatpro'
 
+The server development port and the database used can be configured in conf.json in the build directory.
+Create a database and run Gchatpro.sql in the build directory to generate tables that meet the requirements
+
 ## Characteristics
 
 Use epoll + thread pool for high concurrency
