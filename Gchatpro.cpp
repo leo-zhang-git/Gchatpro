@@ -3,6 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <unordered_map>
+#include <fstream>
 
 #include "TcpServer.h"
 #include "json/json.h"
@@ -48,13 +49,13 @@ enum UserState
 std::threadpool tp;
 
 //  mysql connect
-const char* host = "0.0.0.0";
-const char* user = "root";
-const char* pwd = "zw0727@qq.cn";
-const char* dbname = "Gchatpro";
-unsigned int dbport = 3306;
-zwdbc::Connectpool cp{ host, user, pwd, dbname, dbport };
-
+//const char* host = "0.0.0.0";
+//const char* user = "root";
+//const char* pwd = "zw0727@qq.cn";
+//const char* dbname = "Gchatpro";
+//unsigned int dbport = 3306;
+//zwdbc::Connectpool cp{ host, user, pwd, dbname, dbport };
+zwdbc::Connectpool cp;
 
 std::mutex _outlock, _createroom;
 std::unordered_map<int, std::mutex> fdreadlock;
@@ -175,8 +176,28 @@ bool isEqual(const char* a,const char* b)
 
 void init() 
 {
+	Json::Value conf;
+	Json::Reader jreader;
+
+	std::ifstream in("../conf.json");
+	if (!in)
+	{
+		std::cout << "open conf.json error !" << std::endl;
+		exit(-1);
+	}
+	std::ostringstream tmp;
+	tmp << in.rdbuf();
+	std::string str = tmp.str();
+	
+	if (!jreader.parse(str, conf))
+	{
+		std::cout << "conf.json format error!" << std::endl;
+		exit(-1);
+	}
+	
+
 	//  init server
-	constexpr u_int16_t listenport = 8011;
+	u_int16_t listenport = conf["tcpport"].asInt();
 	if (!server.InitServer(listenport)) 
 	{
 		std::cout << "server init failed ! " << std::endl;
@@ -186,6 +207,15 @@ void init()
 	{
 		std::cout << "server init complete ! listenfd: " << server.listenfd << std::endl;
 	}
+
+
+	//  connect database
+	const char* host = conf["dbhost"].asCString();
+	const char* user = conf["dbuser"].asCString();
+	const char* pwd = conf["dbpassword"].asCString();
+	const char* dbname = conf["dbname"].asCString();
+	unsigned int dbport = conf["dbport"].asInt();
+	cp.Init(host, user, pwd, dbname, dbport);
 
 	//  init epoll attribute
 	epollfd = epoll_create1(0);
@@ -269,6 +299,7 @@ void DelConnect(int fd)
 	if (getid[fd] == -1) getid.erase(fd);
 	else Signout(fd);
 	fdreadlock.erase(fd);
+	fdwritelock.erase(fd);
 	epoll_event evt;
 	evt.data.fd = fd;
 	epoll_ctl(epollfd, EPOLL_CTL_DEL, evt.data.fd, &evt);
@@ -1407,13 +1438,10 @@ void RemoveMember(Json::Value& jroot, int fd)
 			targetidx = i;
 		}
 	}
-
-	std::cout << "idx : " << targetidx << std::endl;
 	if(targetidx >= 0)memberList.removeIndex(targetidx, nullptr);
 
 	//  把数据库中群成员更新，并更新被删除的成员的群列表
 	sqlstr = "update tRoom set members ='"+JsonToString(memberList)+"' where id=" + jroot["rid"].asString();
-	std::cout << sqlstr << std::endl;
 	myq = cp.query(sqlstr);
 	if (!myq.getState()) return;
 

@@ -1,0 +1,11 @@
+{
+    //  开放tcp连接端口，注意查看防火墙是否开放对应端口
+    "tcpport": 8011,
+
+    //  数据库配置
+    "dbhost": "0.0.0.0",
+    "dbuser": "root",
+    "dbpassword": "zw0727@qq.cn",
+    "dbname":"Gchatpro",
+    "dbport": 3306
+}

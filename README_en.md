@@ -19,3 +19,5 @@ make
 Use epoll + thread pool for high concurrency
 
 The transmitted data is in the format of a user-defined packet header and JSON file
+
+Multi-io threads Multitasking threads
