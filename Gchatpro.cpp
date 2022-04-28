@@ -35,6 +35,9 @@ enum Act
 	ACT_ADDRB = 18,
 	ACT_ACKADDRA = 19,
 	ACT_GETRNAME = 20,
+	ACT_CREATER = 21,
+	ACT_REMOVEM = 22,
+	ACT_DELROOM = 23,
 };
 enum UserState
 {
@@ -53,8 +56,9 @@ unsigned int dbport = 3306;
 zwdbc::Connectpool cp{ host, user, pwd, dbname, dbport };
 
 
-std::mutex _outlock;
-std::unordered_map<int, std::mutex> fdlock;
+std::mutex _outlock, _createroom;
+std::unordered_map<int, std::mutex> fdreadlock;
+std::unordered_map<int, std::mutex> fdwritelock;
 
 TcpServer server;
 epoll_event ev, events[MAX_EVENTS];
@@ -80,6 +84,8 @@ void AddFriendA(Json::Value& jroot, int fd);
 void AddFriendAbyID(Json::Value& jroot, int fd);
 void AddFriendB(Json::Value& jroot, int fd);
 bool AddFriend(int a, int b);
+void RemoveFriend(Json::Value& jroot, int fd);
+void AremoveB(int auid, int buid);
 void AddRoomA(Json::Value& jroot, int fd);
 void AddRoomB(Json::Value& jroot, int fd);
 void ChatToRoom(Json::Value& jroot, int sender);
@@ -88,6 +94,9 @@ void SendName(Json::Value& jroot, int fd);
 void SendRName(Json::Value& jroot, int fd);
 void GetMember(Json::Value& jroot, int fd);
 void GetStatus(Json::Value& jroot, int fd);
+void CreateRoom(Json::Value& jroot, int fd);
+void DelRoom(Json::Value& jroot, int fd);
+void RemoveMember(Json::Value& jroot, int fd);
 
 
 std::string JsonToString(const Json::Value& root)
@@ -120,6 +129,7 @@ int findJsonArray(const Json::Value& array, T a)
 	return -1;
 }
 
+// 只会给记录了id的fd发送消息，（即已经发送了登录json并登录成功的用户）
 void sendMessage(int fd, const std::string& s)
 {
 	if (!getid.count(fd)) return;
@@ -136,7 +146,10 @@ void sendMessage(int fd, const std::string& s)
 	len = htonl(len);
 	memcpy(buffer.get(), &len, 4);
 
-	std::lock_guard<std::mutex> outlock(_outlock);
+	std::unique_lock<std::mutex> outlock{ _outlock };
+	fdwritelock[fd];
+	std::unique_lock<std::mutex> fdwrite{ fdwritelock[fd] };
+	outlock.unlock();
 	if (server.Write(fd, buffer.get(), s.size() + HEAD_SIZE) <= 0)
 		DelConnect(fd);
 
@@ -220,7 +233,7 @@ void waitEvent()
 			{
 				//  deal IO
 				//  DealInput(events[i].data.fd);
-				fdlock[events[i].data.fd];
+				fdreadlock[events[i].data.fd];
 				tp.commit(DealInput, int(events[i].data.fd));
 			}
 			
@@ -255,7 +268,7 @@ void DelConnect(int fd)
 	std::cout << "start  close socket : " << fd << std::endl;
 	if (getid[fd] == -1) getid.erase(fd);
 	else Signout(fd);
-	fdlock.erase(fd);
+	fdreadlock.erase(fd);
 	epoll_event evt;
 	evt.data.fd = fd;
 	epoll_ctl(epollfd, EPOLL_CTL_DEL, evt.data.fd, &evt);
@@ -265,7 +278,7 @@ void DelConnect(int fd)
 
 void DealInput(int fd) 
 {
-	std::unique_lock<std::mutex> lock{ fdlock[fd] };
+	std::unique_lock<std::mutex> lock{ fdreadlock[fd] };
 	std::shared_ptr<char> buffer(new char[BUFFER_SIZE]);
 
 	u_int32_t len = 0;
@@ -379,6 +392,9 @@ void DoTask(Json::Value &jroot, int fd)
 	case Act::ACT_ADDFB:
 		AddFriendB(jroot, fd);
 		break;
+	case Act::ACT_REMOVEF:
+		RemoveFriend(jroot, fd);
+		break;
 	case Act::ACT_CHATR:
 		if (getid[fd] == -1)
 		{
@@ -407,6 +423,15 @@ void DoTask(Json::Value &jroot, int fd)
 		break;
 	case Act::ACT_ADDRB:
 		AddRoomB(jroot, fd);
+		break;
+	case Act::ACT_CREATER:
+		CreateRoom(jroot, fd);
+		break;
+	case Act::ACT_DELROOM:
+		DelRoom(jroot, fd);
+		break;
+	case Act::ACT_REMOVEM:
+		RemoveMember(jroot, fd);
 		break;
 	default:
 		break;
@@ -531,18 +556,21 @@ void Signin(Json::Value& jroot, int fd)
 				std::cerr << "jreader parse failed !\n";
 				return;
 			}
-			sqlstr = "select id, uname from tUser where id in (";
-			for (int i = 0; i < friList.size(); i++)
+			if (friList.size() > 0)
 			{
-				NotifyFriState(friList[i].asInt(), rejroot["id"].asInt(), UserState::ONLINE);
-				sqlstr += friList[i].asString();
-				if (i < friList.size() - 1) sqlstr += ",";
-				else sqlstr += ")";
+				sqlstr = "select id, uname from tUser where id in (";
+				for (int i = 0; i < friList.size(); i++)
+				{
+					NotifyFriState(friList[i].asInt(), rejroot["id"].asInt(), UserState::ONLINE);
+					sqlstr += friList[i].asString();
+					if (i < friList.size() - 1) sqlstr += ",";
+					else sqlstr += ")";
+				}
+				zwdbc::MysqlQuery tquery = cp.query(sqlstr);
+				if (!tquery.getState()) return;
+				while (tquery.nextline())
+					frikvList[tquery.getRow()[0]] = tquery.getRow()[1];
 			}
-			zwdbc::MysqlQuery tquery = cp.query(sqlstr);
-			if (!tquery.getState()) return;
-			while (tquery.nextline())
-				frikvList[tquery.getRow()[0]] = tquery.getRow()[1];
 		}
 		rejroot["friList"] = frikvList;
 
@@ -555,18 +583,29 @@ void Signin(Json::Value& jroot, int fd)
 				std::cerr << "jreader parse failed !\n";
 				return;
 			}
-			sqlstr = "select id, name from tRoom where id in (";
-			for (int i = 0; i < roomList.size(); i++)
+			if (roomList.size() > 0)
 			{
-				sqlstr += roomList[i].asString();
-				if (i < roomList.size() - 1) sqlstr += ",";
-				else sqlstr += ")";
-			}
-			zwdbc::MysqlQuery tquery = cp.query(sqlstr);
-			if (!tquery.getState()) return;
+				sqlstr = "select id, name from tRoom where id in (";
+				for (int i = 0; i < roomList.size(); i++)
+				{
+					sqlstr += roomList[i].asString();
+					if (i < roomList.size() - 1) sqlstr += ",";
+					else sqlstr += ")";
+				}
+				zwdbc::MysqlQuery tquery = cp.query(sqlstr);
+				if (!tquery.getState()) return;
 
-			while (tquery.nextline())
-				roomkvList[tquery.getRow()[0]] = tquery.getRow()[1];
+				roomList.clear();
+				while (tquery.nextline())
+				{
+					roomkvList[tquery.getRow()[0]] = tquery.getRow()[1];
+					roomList.append(atoi(tquery.getRow()[0]));
+				}
+				//  删除群列表中被解散的群
+				sqlstr = "update tUser set roomList='" + JsonToString(roomList) + "' where id=" + rejroot["id"].asString();
+				tquery = cp.query(sqlstr);
+				if (!tquery.getState()) return;
+			}
 		}
 		rejroot["roomList"] = roomkvList;
 
@@ -598,8 +637,6 @@ void Signin(Json::Value& jroot, int fd)
 		if (myq.getRow()[6] != nullptr) jreader.parse(myq.getRow()[6], chatlog);
 
 		//  send offline friendship request
-		sqlstr = "update tUser set friReq=null where id=" + std::to_string(getid[fd]);
-		cp.query(sqlstr);
 		onefriReq["act"] = Act::ACT_ADDFA;
 		for (auto &i : friReqs.getMemberNames())
 		{
@@ -609,8 +646,6 @@ void Signin(Json::Value& jroot, int fd)
 		}
 
 		//  send offline add room request
-		sqlstr = "update tUser set roomReq=null where id=" + std::to_string(getid[fd]);
-		cp.query(sqlstr);
 		oneRoomReq["act"] = Act::ACT_ADDRA;
 		for (auto& i : roomReqs.getMemberNames())
 		{
@@ -637,7 +672,7 @@ void Signin(Json::Value& jroot, int fd)
 		}
 		
 		//  delete offline message, update the lastlogin time
-		sqlstr = "update tUser set offline_message=NULL, lastlogin_time=now()  where id=" + rejroot["id"].asString();
+		sqlstr = "update tUser set friReq=null, roomReq=null, offline_message=NULL, lastlogin_time=now()  where id=" + rejroot["id"].asString();
 		myq = cp.query(sqlstr);
 		if (!myq.getState()) return;
 
@@ -929,6 +964,47 @@ bool AddFriend(int a, int b)
 	if (!myq.getState()) return false;
 	return true;
 }
+void RemoveFriend(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo RemoveFriend ================================================================================== \n";
+	if (getid[fd] == -1)
+	{
+		std::cout << "未登录，删好友！\n";
+		return;
+	}
+	Json::Value friList;
+	Json::Reader jreader;
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+
+	int auid = getid[fd], buid = jroot["id"].asInt();
+
+	AremoveB(auid, buid);
+	AremoveB(buid, auid);
+}
+void AremoveB(int auid, int buid)
+{
+	Json::Value jroot, friList;
+	Json::Reader jreader;
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+	int idx;
+
+	jroot["act"] = Act::ACT_REMOVEF;
+	jroot["id"] = buid;
+
+	sqlstr = "select friList from tUser where id=" + std::to_string(auid);
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	if (myq.getRow()[0]) jreader.parse(myq.getRow()[0], friList);
+	idx = findJsonArray(friList, buid);
+	if (idx >= 0) friList.removeIndex(idx, nullptr);
+	sqlstr = "update tUser set friList='" + JsonToString(friList) + "' where id=" + std::to_string(auid);
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+	if(getsock.count(auid))sendMessage(getsock[auid], JsonToString(jroot));
+	
+}
 void AddRoomA(Json::Value& jroot, int fd)
 {
 	std::cout << "\ndo AddRoomA ================================================================================== \n";
@@ -1168,15 +1244,37 @@ void GetMember(Json::Value& jroot, int fd)
 	std::string memberList = std::string(myq.getRow()[0]);
 	memberList[0] = ' ';
 	memberList[memberList.size() - 1] = ' ';
+
+	//  取群主放第一位
+	int pos = memberList.size();
+	for (int i = 0; i < pos; i++)
+	{
+		if (memberList[i] == ',') {
+			pos = i;
+			break;
+		}
+	}
+
+	member.append(atoi(memberList.substr(0, pos).c_str()));
+	jroot["members"].append(member);
+
 	sqlstr += memberList + ")";
 	myq = cp.query(sqlstr);
 	if (!myq.getState()) return;
 	while (myq.nextline())
 	{
-		member.append(atoi(myq.getRow()[0]));
+		int id = atoi(myq.getRow()[0]);
+		if (id == jroot["members"][0][0].asInt())
+		{
+			jroot["members"][0].append(myq.getRow()[1]);
+			continue;
+		}
+		member.clear();
+		
+		member.append(id);
 		member.append(myq.getRow()[1]);
 		jroot["members"].append(member);
-		member.clear();
+		
 	}
 	sendMessage(fd, JsonToString(jroot));
 }
@@ -1197,4 +1295,136 @@ void GetStatus(Json::Value& jroot, int fd)
 	jroot["createtime"] = myq.getRow()[3];
 	jroot["lastsignin"] = myq.getRow()[4];
 	sendMessage(fd, JsonToString(jroot));
+}
+void CreateRoom(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo CreateRoom ================================================================================== \n";
+	Json::Value roomList;
+	Json::Reader jreader;
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+	int rid, uid = getid[fd];
+	std::string name = jroot["name"].asString();
+	if (uid == -1)
+	{
+		std::cout << "未登录不能创群\n";
+		return;
+	}
+	sqlstr = "SELECT Auto_increment FROM information_schema.`TABLES` WHERE Table_Schema='Gchatpro' AND table_name = 'tRoom'";
+	{
+		std::unique_lock<std::mutex> lock{ _createroom };
+		myq = cp.query(sqlstr);
+		if (!myq.nextline()) return;
+		rid = atoi(myq.getRow()[0]);
+		sqlstr = "insert into tRoom (name, members) values ('" + replaceSinglequote(name) + "', '["+std::to_string(uid)+"]')";
+		myq = cp.query(sqlstr);
+		if (!myq.getState()) return;
+	}
+
+	// 更新群主用户的群列表
+	sqlstr = "select roomList from tUser where id=" + std::to_string(uid);
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	if (myq.getRow()[0]) jreader.parse(myq.getRow()[0], roomList);
+	roomList.append(rid);
+	sqlstr = "update tUser set roomList='"+JsonToString(roomList)+"' where id=" + std::to_string(uid);
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+
+	// 创建群消息记录表
+	sqlstr = "CREATE  TABLE roomlog" + std::to_string(rid) + " (LIKE roomlog_origin)";
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+
+	jroot["id"] = rid;
+	sendMessage(fd, JsonToString(jroot));
+}
+void DelRoom(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo DelRoom ================================================================================== \n";
+	Json::Value memberList;
+	Json::Reader jreader;
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+	
+	//  通知在线成员群解散了
+	sqlstr = "select members from tRoom where id="+jroot["rid"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	jreader.parse(myq.getRow()[0], memberList);
+
+	if (getid[fd] != memberList[0].asInt())
+	{
+		std::cout << "不是群主，不能解散该群\n";
+		return;
+	}
+	for (int i = 0; i < memberList.size(); i++)
+		if (getsock.count(memberList[i].asInt()))
+			sendMessage(getsock[memberList[i].asInt()], JsonToString(jroot));
+
+	//  删除群和存储群聊天记录的表
+	sqlstr = "delete from tRoom where id=" + jroot["rid"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+	sqlstr = "drop table roomlog"+jroot["rid"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+}
+void RemoveMember(Json::Value& jroot, int fd)
+{
+	std::cout << "\ndo RemoveMember ================================================================================== \n";
+	Json::Value memberList;
+	Json::Reader jreader;
+	zwdbc::MysqlQuery myq;
+	std::string sqlstr;
+	int rid = jroot["rid"].asInt(), uid = jroot["uid"].asInt();
+
+	//  通知在线成员某个成员被删除
+	sqlstr = "select members from tRoom where id=" + jroot["rid"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	jreader.parse(myq.getRow()[0], memberList);
+
+	if (getid[fd] != memberList[0].asInt())
+	{
+		std::cout << "不是群主，不能删除成员\n";
+		return;
+	}
+	else if (uid == getid[fd])
+	{
+		std::cout << "不能删除群主\n";
+		return;
+	}
+	int targetidx = -1;
+	for (int i = 0; i < memberList.size(); i++)
+	{
+		if (getsock.count(memberList[i].asInt()))
+		{
+			sendMessage(getsock[memberList[i].asInt()], JsonToString(jroot));
+		}
+		if (memberList[i].asInt() == uid)
+		{
+			targetidx = i;
+		}
+	}
+
+	std::cout << "idx : " << targetidx << std::endl;
+	if(targetidx >= 0)memberList.removeIndex(targetidx, nullptr);
+
+	//  把数据库中群成员更新，并更新被删除的成员的群列表
+	sqlstr = "update tRoom set members ='"+JsonToString(memberList)+"' where id=" + jroot["rid"].asString();
+	std::cout << sqlstr << std::endl;
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+
+	sqlstr = "select roomList from tUser where id=" + jroot["uid"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.nextline()) return;
+	if (myq.getRow()[0]) jreader.parse(myq.getRow()[0], memberList);
+	int idx = findJsonArray(memberList, rid);
+	if (idx >= 0) memberList.removeIndex(idx, nullptr);
+	sqlstr = "update tUser set roomList ='" + JsonToString(memberList) + "' where id=" + jroot["uid"].asString();
+	myq = cp.query(sqlstr);
+	if (!myq.getState()) return;
+
 }
