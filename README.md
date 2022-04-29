@@ -13,8 +13,14 @@ make
 
 2.运行生成的可执行文件Gchatpro
 
+**其它依赖项**
+
 build目录下的 conf.json 中可以配置服务器开发端口和所使用的数据库，自行
 创建一个数据库并运行build目录下的Gchatpro.sql生成符合要求的表
+
+你需要安装mysql 5.5.62版本或其兼容版本
+
+你需要安装libmysqlclient-dev库
 
 ## 特点
 使用epoll + 线程池实现高并发
