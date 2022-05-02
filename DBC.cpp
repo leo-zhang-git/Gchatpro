@@ -131,14 +131,8 @@ namespace zwdbc
         run = false;
     }
 
-    void Connectpool::Init(const char* host, const char* user, const char* pwd, const char* dbname, unsigned int port, int num)
+    void Connectpool::Init(int num)
     {
-        this->host = host;
-        this->user = user;
-        this->pwd = pwd;
-        this->dbname = dbname;
-        this->port = port;
-
         for (int i = 0; i < num; i++)
         {
             pool.emplace(Connect(host, user, pwd, dbname, port));

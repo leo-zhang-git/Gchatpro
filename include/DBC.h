@@ -58,8 +58,14 @@ namespace zwdbc
         Connectpool() = default;
         ~Connectpool();
 
-        void Init(const char* host, const  char* user, const  char* pwd, const char* dbname, unsigned int port = 3306, int num = 4);
+        void Init(int num = 4);
         MysqlQuery query(const std::string& sqlstr);
+
+        const char* host;
+        const  char* user;
+        const  char* pwd;
+        const char* dbname;
+        unsigned int port = 3306;
     private:
         MYSQL* getCon();
         void addCon(MYSQL* conn);
@@ -69,11 +75,6 @@ namespace zwdbc
         std::mutex _m;
         std::atomic<bool> run;
         std::condition_variable cv;
-        const char* host;
-        const  char* user;
-        const  char* pwd;
-        const char* dbname;
-        unsigned int port = 3306;
     };
 }
 

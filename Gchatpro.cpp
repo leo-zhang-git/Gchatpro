@@ -210,12 +210,12 @@ void init()
 
 
 	//  connect database
-	const char* host = conf["dbhost"].asCString();
-	const char* user = conf["dbuser"].asCString();
-	const char* pwd = conf["dbpassword"].asCString();
-	const char* dbname = conf["dbname"].asCString();
-	unsigned int dbport = conf["dbport"].asInt();
-	cp.Init(host, user, pwd, dbname, dbport);
+	cp.host = conf["dbhost"].asCString();
+	cp.user = conf["dbuser"].asCString();
+	cp.pwd = conf["dbpassword"].asCString();
+	cp.dbname = conf["dbname"].asCString();
+	cp.port = conf["dbport"].asInt();
+	cp.Init();
 
 	//  init epoll attribute
 	epollfd = epoll_create1(0);
