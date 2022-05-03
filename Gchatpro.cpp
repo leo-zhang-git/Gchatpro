@@ -210,10 +210,10 @@ void init()
 
 
 	//  connect database
-	cp.host = conf["dbhost"].asCString();
-	cp.user = conf["dbuser"].asCString();
-	cp.pwd = conf["dbpassword"].asCString();
-	cp.dbname = conf["dbname"].asCString();
+	cp.host = conf["dbhost"].asString();
+	cp.user = conf["dbuser"].asString();
+	cp.pwd = conf["dbpassword"].asString();
+	cp.dbname = conf["dbname"].asString();
 	cp.port = conf["dbport"].asInt();
 	cp.Init();
 

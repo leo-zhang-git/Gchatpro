@@ -61,10 +61,10 @@ namespace zwdbc
         void Init(int num = 4);
         MysqlQuery query(const std::string& sqlstr);
 
-        const char* host;
-        const  char* user;
-        const  char* pwd;
-        const char* dbname;
+        std::string host;
+        std::string user;
+        std::string pwd;
+        std::string dbname;
         unsigned int port = 3306;
     private:
         MYSQL* getCon();

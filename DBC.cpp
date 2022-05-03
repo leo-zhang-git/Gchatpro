@@ -135,7 +135,7 @@ namespace zwdbc
     {
         for (int i = 0; i < num; i++)
         {
-            pool.emplace(Connect(host, user, pwd, dbname, port));
+            pool.emplace(Connect(host.c_str(), user.c_str(), pwd.c_str(), dbname.c_str(), port));
         }
         run = true;
     }
@@ -145,7 +145,7 @@ namespace zwdbc
         //std::cout << "\nsql : " << sqlstr << "\n";
         MysqlQuery res;
         MYSQL* conn = getCon();
-        if (mysql_ping(conn)) conn = Connect(host, user, pwd, dbname, port);
+        if (mysql_ping(conn)) conn = Connect(host.c_str(), user.c_str(), pwd.c_str(), dbname.c_str(), port);
         mysql_query(conn, "set names utf8mb4");
         res.query(sqlstr, conn);
         addCon(conn);
