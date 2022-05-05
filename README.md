@@ -18,6 +18,8 @@ make
 build目录下的 conf.json 中可以配置服务器开发端口和所使用的数据库，自行
 创建一个数据库并运行build目录下的Gchatpro.sql生成符合要求的表
 
+cmake工具
+
 你需要安装mysql 5.5.62版本或其兼容版本
 
 你需要安装libmysqlclient-dev库
